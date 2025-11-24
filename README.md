@@ -22,12 +22,12 @@ Meta Quest などのVRヘッドセットを装着し、目の前の3Dキャラ�
 
 ## 🧱 プロジェクト構成
 
-- Unity 6.0 (6000.0.50f1)
-- Target: Meta Quest などの Android ベース XR デバイス
+- **Unity Version**: Unity 6.0 (6000.0.50f1)
+- **Target**: Meta Quest などの Android ベース XR デバイス
 - 主な依存パッケージ
   - **XR Interaction Toolkit / XR Management**
   - **Input System (New)**
-  - unity-Chan!（※ライセンス上、別途導入）
+  - **unity-chan!**（※ライセンス上、別途導入）
     
 ## 🛠️ システム連携図
 
