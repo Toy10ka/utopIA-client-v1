@@ -1,0 +1,134 @@
+{
+    "name": "New Controls",
+    "maps": [
+        {
+            "name": "Interaction",
+            "id": "3c645db8-ee50-4eaa-a09e-70b03e266149",
+            "actions": [
+                {
+                    "name": "XR_PrimaryButtonR",
+                    "type": "Button",
+                    "id": "3e7cb2a1-4f85-43a2-a395-99f4c698b96d",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "XR_SecondaryButtonR",
+                    "type": "Button",
+                    "id": "c3005d39-9dd9-45ad-8587-6e53cef7c7fe",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "XR_PrimaryButtonL",
+                    "type": "Button",
+                    "id": "ede73c02-feb3-42e7-9968-1e9a7e6e2d99",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "XR_SecondaryButtonL",
+                    "type": "Button",
+                    "id": "63ea6db1-a6bd-4089-a15a-45a709e254f6",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "XR_TriggerR",
+                    "type": "Button",
+                    "id": "43b14df2-526a-40cf-a579-c9f70ca1d071",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "XR_TriggerL",
+                    "type": "Button",
+                    "id": "a6b075e9-262e-4ebd-9989-3793f7b11241",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "7243e4c9-4a15-404a-be64-e6348abfaec4",
+                    "path": "<XRController>{RightHand}/primaryButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_PrimaryButtonR",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "ec44ca23-a6c1-40ab-9def-c63079df1c9c",
+                    "path": "<XRController>{RightHand}/secondaryButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_SecondaryButtonR",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "905ce53a-73d9-45ab-bed8-ec8f539ab85e",
+                    "path": "<XRController>{LeftHand}/primaryButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_PrimaryButtonL",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "58cc3d04-91a8-444e-9981-8d7444c633c3",
+                    "path": "<XRController>{LeftHand}/secondaryButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_SecondaryButtonL",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "ea44c88b-7320-4643-a3c8-c2d46a931a9d",
+                    "path": "<XRController>{RightHand}/triggerButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_TriggerR",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "0b8059e5-b31b-4e41-92a7-09e901840cd4",
+                    "path": "<XRController>{LeftHand}/triggerButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "XR_TriggerL",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": []
+}
