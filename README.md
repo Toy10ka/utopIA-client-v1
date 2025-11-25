@@ -55,20 +55,6 @@ graph LR
     Speaker -- 音声 --> User
     Face -- 視覚情報 --> User
 ```
-- UtopiaSttClient
-  - XR Aボタン長押し or キーボード V キー長押し → マイク録音
-  - ボタンを離したタイミングで WAV を `/api/stt` に送信
-  - 返ってきた `text` を UtopiaClient に渡す
-
-- UtopiaClient
-  - `SetPrompt(string)` で現在のプロンプトを設定
-  - `PlayCurrentPrompt()` で `/api/ask_tts` を叩き、返ってきた WAV を再生
-  - Editor でのデバッグ用に Space キーも対応
-
-- LipSyncSimple
-  - 再生中の `AudioSource` の波形から RMS を計算し、
-  - 口の開き／揺らぎ用ブレンドシェイプにウェイトをかける簡易リップシンク
-
 
 ## ⚙️ セットアップ
 
