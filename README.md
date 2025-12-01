@@ -33,27 +33,50 @@ Meta Quest などのVRヘッドセットを装着し、目の前の3Dキャラ�
 
 ```mermaid
 graph LR
-    User((User / VR))
+    %% ユーザーノード
+    User((👤 User / VR))
 
-    subgraph Unity Client [utopIA-client-v1]
+    %% クライアント領域（Unity）
+    subgraph UnityClient [🎮 utopIA-client]
+        direction TB
         Mic[Microphone Input]
+        Logic[Utopia Client Scripts]
         Speaker[Audio Source]
         Face[3D Character<br/>LipSync]
-        Logic[Utopia Client Scripts]
     end
 
-    subgraph Server [utopia-server]
+    %% サーバー領域
+    subgraph DockerEnv [🐳 utopia-server]
         API[Flask API]
     end
 
-    User -- 話しかける --> Mic
-    Mic -- WAV Data --> Logic
-    Logic -- POST /api/stt --> API
-    API -- Text/Audio --> Logic
+    %% データフロー
+    User -->|話しかける| Mic
+    Mic -->|WAV Data| Logic
+    
+    Logic -->|POST /api/stt| API
+    API -->|Text / Audio| Logic
+    
     Logic --> Speaker
     Logic --> Face
-    Speaker -- 音声 --> User
-    Face -- 視覚情報 --> User
+    
+    Speaker -->|音声| User
+    Face -->|視覚情報| User
+
+    %% スタイル定義
+    
+    %% User: 目立つように黄色系
+    style User fill:#fff9c4,stroke:#fbc02d,stroke-width:2px
+    
+    %% Unity Client: Clientノードと同じ紫色
+    style UnityClient fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,rx:10,ry:10
+    
+    %% Server: 
+    style DockerEnv fill:#e3f2fd,stroke:#0277bd,stroke-width:2px,stroke-dasharray: 5 5,rx:10,ry:10
+
+    %% 重要なロジックノードを強調
+    style Logic fill:#e1bee7,stroke:#4a148c,stroke-width:2px
+
 ```
 
 ## ⚙️ セットアップ
