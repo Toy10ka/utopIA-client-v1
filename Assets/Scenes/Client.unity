@@ -836,6 +836,58 @@ MonoBehaviour:
   showHUD: 1
   testKey: 116
   useAudioListenerFallback: 1
+--- !u!1 &645383413
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 645383415}
+  - component: {fileID: 645383414}
+  m_Layer: 0
+  m_Name: CommonMotion_Preview
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &645383414
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 645383413}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d68632c79aa69cd47a577a325525cb58, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  motionJson: {fileID: 4900000, guid: c775f18efeff32741b8e5ba3c7a37f40, type: 3}
+  playOnStart: 1
+  loop: 0
+  playbackSpeed: 1
+  jointDiameter: 0.035
+  boneDiameter: 0.018
+  humanMaterial: {fileID: 0}
+  objectMaterial: {fileID: 0}
+--- !u!4 &645383415
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 645383413}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.86649865, y: 1.4730228, z: 0.36283106}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &788111584
 GameObject:
   m_ObjectHideFlags: 0
@@ -5270,3 +5322,4 @@ SceneRoots:
   - {fileID: 839352163}
   - {fileID: 1981792617}
   - {fileID: 30132677}
+  - {fileID: 645383415}
