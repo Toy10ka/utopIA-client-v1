@@ -100,10 +100,14 @@ namespace Utopia.Motion.Editor
         private static InfBaGelGenerateMotionRequest Request() { return InfBaGelApiProtocol.Request(InfBaGelApiProtocol.DefaultSceneId, 0, 0); }
         private static string ResponseJson(CommonMotionClip clip, string scene = InfBaGelApiProtocol.DefaultSceneId, int index = 0, int seed = 0)
         {
-            InfBaGelMotionEnvelope env = new InfBaGelMotionEnvelope { source = new InfBaGelMotionSource
+            InfBaGelMotionEnvelope env = new InfBaGelMotionEnvelope
             {
-                backend = "infbagel", api_generation = new InfBaGelGenerationMetadata { mode = "official_hosi_case", scene_id = scene, test_item_index = index, seed = seed }
-            }};
+                source = new InfBaGelMotionSource
+                {
+                    backend = "infbagel",
+                    api_generation = new InfBaGelGenerationMetadata { mode = "official_hosi_case", scene_id = scene, test_item_index = index, seed = seed }
+                }
+            };
             string motion = JsonUtility.ToJson(clip);
             return motion.Substring(0, motion.Length - 1) + "," + JsonUtility.ToJson(env).Substring(1);
         }
@@ -121,9 +125,10 @@ namespace Utopia.Motion.Editor
             }
             return new CommonMotionClip
             {
-                schema_version = CommonMotionValidation.Version, motion_id = Id,
+                schema_version = CommonMotionValidation.Version,
+                motion_id = Id,
                 time = new MotionTime { fps = 30, frame_count = 2, time_origin_s = 0 },
-                space = new MotionSpace { basis = "unity_lh_y_up_z_forward", length_unit = "meter", frame_id = "synthetic_test" },
+                space = new MotionSpace { basis = "unity_lh_y_up_z_forward", length_unit = "meter", frame_id = "infbagel_scene:" + InfBaGelApiProtocol.DefaultSceneId },
                 skeleton = new MotionSkeleton { profile_id = "synthetic_test", joint_names = names, parent_indices = parents, rest_offsets_m = new Vector3[22] },
                 human = new HumanTrack { frames = human },
                 objects = new[] { new ObjectTrack { track_id = "synthetic_0", asset_id = "synthetic_mesh_not_clothesstand", frames = objects,

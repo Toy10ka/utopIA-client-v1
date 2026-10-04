@@ -7,7 +7,8 @@ using UnityEngine;
 namespace Utopia.Motion
 {
     // InfBaGel_API_v0_1/infbagel_api/contracts.py. Selects one official case;
-    // does NOT send arbitrary text, avatar history, object transforms or scene geometry.
+    // v0.2 optionally sends explicit goal points; it still does NOT send arbitrary text,
+    // current avatar history, initial object transforms or scene geometry.
     [Serializable]
     public sealed class InfBaGelGenerateMotionRequest
     {
@@ -17,12 +18,56 @@ namespace Utopia.Motion
     }
 
     [Serializable]
+    public sealed class InfBaGelGoalOverrides
+    {
+        public string coordinate_frame = InfBaGelGoalCoordinates.NativeFrame;
+        public float[] pelvis_goal;
+        public float[] object_goal;
+    }
+    [Serializable]
+    public sealed class InfBaGelGenerateWithGoalsRequest
+    {
+        public string scene_id;
+        public int test_item_index;
+        public int seed;
+        public InfBaGelGoalOverrides goal_overrides;
+    }
+    [Serializable]
+    public sealed class InfBaGelCaseGoals
+    {
+        public string api_version;
+        public string scene_id;
+        public int test_item_index;
+        public string frame_id;
+        public string coordinate_frame;
+        public string object_name;
+        public int data_idx;
+        public float[] start_location;
+        public float[] pelvis_goal;
+        public float[] object_goal;
+        public string initial_state;
+    }
+    [Serializable] public sealed class InfBaGelEffectiveGoals { public float[] pelvis_goal; public float[] object_goal; }
+    [Serializable]
+    public sealed class InfBaGelGoalInputMetadata
+    {
+        public string coordinate_frame;
+        public bool overrides_applied;
+        public InfBaGelEffectiveGoals original;
+        public InfBaGelEffectiveGoals effective;
+        public string initial_state;
+        public float[] initial_alignment_pelvis_goal;
+    }
+    [Serializable] public sealed class InfBaGelApiCapabilities { public bool goal_overrides; public bool case_goals; }
+
+    [Serializable]
     public sealed class InfBaGelApiHealth
     {
         public string status;
         public bool busy;
         public string api_version;
         public InfBaGelApiRuntime runtime;
+        public InfBaGelApiCapabilities capabilities;
     }
     [Serializable]
     public sealed class InfBaGelApiRuntime
@@ -34,13 +79,16 @@ namespace Utopia.Motion
     // Read only the identifying metadata added by the existing server. This does not
     // change CommonMotionClip or make the shared player depend on InfBaGel.
     [Serializable] public sealed class InfBaGelMotionEnvelope { public InfBaGelMotionSource source; }
-    [Serializable] public sealed class InfBaGelMotionSource
+    [Serializable]
+    public sealed class InfBaGelMotionSource
     {
         public string backend;
         public InfBaGelGenerationMetadata api_generation;
     }
-    [Serializable] public sealed class InfBaGelGenerationMetadata
+    [Serializable]
+    public sealed class InfBaGelGenerationMetadata
     {
+        public InfBaGelGoalInputMetadata goal_input;
         public string mode;
         public string scene_id;
         public int test_item_index;
@@ -82,6 +130,76 @@ namespace Utopia.Motion
             return new InfBaGelGenerateMotionRequest { scene_id = sceneId, test_item_index = itemIndex, seed = seed };
         }
 
+        public static string CaseGoalsEndpoint(string baseUrl, string scene, int itemIndex)
+        {
+            Request(scene, itemIndex, 0);
+            // Endpoint() validates the base URL; replace only the final fixed route.
+            string health = Endpoint(baseUrl, "health");
+            return health.Substring(0, health.Length - "health".Length) + "cases/" +
+                Uri.EscapeDataString(scene) + "/items/" + itemIndex.ToString(CultureInfo.InvariantCulture) + "/goals";
+        }
+
+        public static InfBaGelGoalOverrides ValidateGoals(InfBaGelGoalOverrides goals)
+        {
+            if (goals == null || goals.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame)
+                throw new ArgumentException("Goals must use infbagel_scene_y_up_m.");
+            Vector3 pelvis = InfBaGelGoalCoordinates.FromArray(goals.pelvis_goal);
+            Vector3 obj = InfBaGelGoalCoordinates.FromArray(goals.object_goal);
+            if (pelvis.y != 0f) throw new ArgumentException("Pelvis Goal marker represents a ground-plane destination (native y=0), not hip height.");
+            foreach (float x in goals.pelvis_goal) if (Mathf.Abs(x) > 1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
+            foreach (float x in goals.object_goal) if (Mathf.Abs(x) > 1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
+            // Snapshot values so later marker movement cannot mutate an in-flight request.
+            return new InfBaGelGoalOverrides
+            {
+                coordinate_frame = goals.coordinate_frame,
+                pelvis_goal = InfBaGelGoalCoordinates.ToArray(pelvis),
+                object_goal = InfBaGelGoalCoordinates.ToArray(obj)
+            };
+        }
+
+        public static string SerializeRequest(InfBaGelGenerateMotionRequest request, InfBaGelGoalOverrides goals)
+        {
+            if (goals == null) return JsonUtility.ToJson(request); // v0.1 wire format stays byte-for-byte structurally compatible.
+            return JsonUtility.ToJson(new InfBaGelGenerateWithGoalsRequest
+            {
+                scene_id = request.scene_id,
+                test_item_index = request.test_item_index,
+                seed = request.seed,
+                goal_overrides = ValidateGoals(goals)
+            });
+        }
+
+        public static InfBaGelCaseGoals ReadCaseGoals(string json, string scene, int itemIndex)
+        {
+            if (string.IsNullOrWhiteSpace(json) || Encoding.UTF8.GetByteCount(json) > MaxHealthBytes)
+                throw new ArgumentException("Invalid case-goals response.");
+            InfBaGelCaseGoals result = JsonUtility.FromJson<InfBaGelCaseGoals>(json);
+            if (result == null || result.scene_id != scene || result.test_item_index != itemIndex ||
+                result.frame_id != "infbagel_scene:" + scene || result.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame ||
+                result.initial_state != "original_official_case_including_original_heading" || string.IsNullOrWhiteSpace(result.object_name))
+                throw new ArgumentException("Case/frame metadata differs from the request. Check that the server is API v0.2.");
+            InfBaGelGoalCoordinates.FromArray(result.start_location);
+            ValidateGoals(new InfBaGelGoalOverrides { pelvis_goal = result.pelvis_goal, object_goal = result.object_goal });
+            return result;
+        }
+
+        public static void CheckGoalEcho(string json, InfBaGelGoalOverrides expected)
+        {
+            if (expected == null) return;
+            InfBaGelMotionEnvelope envelope = JsonUtility.FromJson<InfBaGelMotionEnvelope>(json);
+            InfBaGelGoalInputMetadata goals = envelope != null && envelope.source != null && envelope.source.api_generation != null ?
+                envelope.source.api_generation.goal_input : null;
+            if (goals == null || !goals.overrides_applied || goals.effective == null || goals.original == null ||
+                goals.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame ||
+                goals.initial_state != "original_official_case_including_original_heading")
+                throw new ArgumentException("Response does not confirm goal overrides with fixed initial state. Motion was not applied.");
+            float tolerance = InfBaGelGoalCoordinates.PositionToleranceM;
+            if (Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.pelvis_goal), InfBaGelGoalCoordinates.FromArray(expected.pelvis_goal)) > tolerance ||
+                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.object_goal), InfBaGelGoalCoordinates.FromArray(expected.object_goal)) > tolerance ||
+                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.initial_alignment_pelvis_goal), InfBaGelGoalCoordinates.FromArray(goals.original.pelvis_goal)) > tolerance)
+                throw new ArgumentException("Server effective goals/initial heading disagree with the request. Motion was not applied.");
+        }
+
         public static bool IsJsonContentType(string value)
         {
             return !string.IsNullOrEmpty(value) &&
@@ -111,6 +229,8 @@ namespace Utopia.Motion
             if (clip == null || clip.time == null || clip.time.frame_count > MaxResponseFrames)
                 throw new ArgumentException("Response is not a supported CommonMotion document or exceeds the frame limit.");
             CommonMotionValidation.Validate(clip);
+            if (clip.space.frame_id != "infbagel_scene:" + expected.scene_id)
+                throw new ArgumentException("Returned CommonMotion frame_id differs from the selected scene.");
             if (clip.motion_id == null || !MotionIdPattern.IsMatch(clip.motion_id))
                 throw new ArgumentException("Missing/invalid InfBaGel motion_id.");
             if (!string.IsNullOrEmpty(headerMotionId) && !string.Equals(headerMotionId, clip.motion_id, StringComparison.Ordinal))
@@ -143,11 +263,11 @@ namespace Utopia.Motion
             {
                 case 0: hint = "Cannot reach server / timeout. Check the InfBaGel API container and host port 8002."; break;
                 case 401: hint = "Server requires a Bearer token."; break;
-                case 404: hint = "Scene/item or endpoint not found. Check Scene ID / zero-based index; GET /cases lists available cases."; break;
-                case 409: hint = "Selected case data/configuration is incompatible or exceeds limits. Check [INFBAGEL_API] server logs."; break;
+                case 404: hint = "Scene/item or endpoint not found. Check Scene ID / zero-based index; GET /cases lists cases. For /goals, update the server image to v0.2."; break;
+                case 409: hint = "Selected case/goals are incompatible, out of scene bounds, unreachable, or exceed limits. Check [INFBAGEL_API] server logs."; break;
                 case 413: hint = "Request is too large."; break;
                 case 415: hint = "Server requires application/json."; break;
-                case 422: hint = "Input validation failed. Use scene_id / test_item_index / seed, not DART text/duration fields."; break;
+                case 422: hint = "Input validation failed. Use scene_id / test_item_index / seed and optional v0.2 goal_overrides, not DART text/duration fields. Old v0.1 servers reject goal_overrides."; break;
                 case 429: hint = "InfBaGel is busy. Wait for the current generation; no automatic retry was sent."; break;
                 case 500: hint = "InfBaGel generation failed. Check the server's [INFBAGEL_API] FAILED log."; break;
                 default: hint = "HTTP request failed."; break;
