@@ -7,8 +7,8 @@ using UnityEngine;
 namespace Utopia.Motion
 {
     // InfBaGel_API_v0_1/infbagel_api/contracts.py. Selects one official case;
-    // v0.2 optionally sends explicit goal points; it still does NOT send arbitrary text,
-    // current avatar history, initial object transforms or scene geometry.
+    // v0.3 supports optional goals and a known-object initial pose; no arbitrary text,
+    // measured avatar history, new meshes, or Unity scene geometry.
     [Serializable]
     public sealed class InfBaGelGenerateMotionRequest
     {
@@ -58,7 +58,7 @@ namespace Utopia.Motion
         public string initial_state;
         public float[] initial_alignment_pelvis_goal;
     }
-    [Serializable] public sealed class InfBaGelApiCapabilities { public bool goal_overrides; public bool case_goals; }
+    [Serializable] public sealed class InfBaGelApiCapabilities { public bool goal_overrides; public bool case_goals; public bool object_start_override; public bool case_initial_object; }
 
     [Serializable]
     public sealed class InfBaGelApiHealth
@@ -88,7 +88,11 @@ namespace Utopia.Motion
     [Serializable]
     public sealed class InfBaGelGenerationMetadata
     {
+        public InfBaGelHistorySupport history_support;
+        public InfBaGelHistoryReport human_history_input;
+        public InfBaGelTextReport text_input;
         public InfBaGelGoalInputMetadata goal_input;
+        public InfBaGelObjectStartMetadata object_start_input;
         public string mode;
         public string scene_id;
         public int test_item_index;
@@ -183,7 +187,7 @@ namespace Utopia.Motion
             return result;
         }
 
-        public static void CheckGoalEcho(string json, InfBaGelGoalOverrides expected)
+        public static void CheckGoalEcho(string json, InfBaGelGoalOverrides expected, bool objectStartRequested = false, bool humanHistoryRequested = false)
         {
             if (expected == null) return;
             InfBaGelMotionEnvelope envelope = JsonUtility.FromJson<InfBaGelMotionEnvelope>(json);
@@ -191,7 +195,7 @@ namespace Utopia.Motion
                 envelope.source.api_generation.goal_input : null;
             if (goals == null || !goals.overrides_applied || goals.effective == null || goals.original == null ||
                 goals.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame ||
-                goals.initial_state != "original_official_case_including_original_heading")
+                goals.initial_state != (humanHistoryRequested ? "captured_commonmotion_human_and_object_history" : objectStartRequested ? "official_human_with_object_start_override" : "original_official_case_including_original_heading"))
                 throw new ArgumentException("Response does not confirm goal overrides with fixed initial state. Motion was not applied.");
             float tolerance = InfBaGelGoalCoordinates.PositionToleranceM;
             if (Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.pelvis_goal), InfBaGelGoalCoordinates.FromArray(expected.pelvis_goal)) > tolerance ||
@@ -263,11 +267,11 @@ namespace Utopia.Motion
             {
                 case 0: hint = "Cannot reach server / timeout. Check the InfBaGel API container and host port 8002."; break;
                 case 401: hint = "Server requires a Bearer token."; break;
-                case 404: hint = "Scene/item or endpoint not found. Check Scene ID / zero-based index; GET /cases lists cases. For /goals, update the server image to v0.2."; break;
-                case 409: hint = "Selected case/goals are incompatible, out of scene bounds, unreachable, or exceed limits. Check [INFBAGEL_API] server logs."; break;
+                case 404: hint = "Scene/item or endpoint not found. Check Scene ID / zero-based index; GET /cases lists cases. For /initial-object use server v0.3."; break;
+                case 409: hint = "Selected case/goals/initial pose are incompatible, out of scene bounds, unreachable, or exceed test limits. Check [INFBAGEL_API] server logs."; break;
                 case 413: hint = "Request is too large."; break;
                 case 415: hint = "Server requires application/json."; break;
-                case 422: hint = "Input validation failed. Use scene_id / test_item_index / seed and optional v0.2 goal_overrides, not DART text/duration fields. Old v0.1 servers reject goal_overrides."; break;
+                case 422: hint = "Input validation failed. Use scene_id / test_item_index / seed and optional goal_overrides / object_start_override, not DART text/duration fields. Old servers reject newer input fields."; break;
                 case 429: hint = "InfBaGel is busy. Wait for the current generation; no automatic retry was sent."; break;
                 case 500: hint = "InfBaGel generation failed. Check the server's [INFBAGEL_API] FAILED log."; break;
                 default: hint = "HTTP request failed."; break;

@@ -6,18 +6,17 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Networking;
-using static System.Net.Mime.MediaTypeNames;
 using Debug = UnityEngine.Debug;
 
 namespace Utopia.Motion
 {
     /// <summary>
     /// Development client: HTTP request -> existing CommonMotionPlayer.LoadJson -> Play.
-    /// v0.2 adds goal-point input conversion only. No model pose conversion, floor placement, retarget, or routing.
+    /// v0.3 adds known-object initial-pose input. Human initial state and scene remain official.
     /// Does not generate until explicitly requested in Play Mode.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class CommonMotionInfBaGelApiClient : MonoBehaviour
+    public sealed partial class CommonMotionInfBaGelApiClient : MonoBehaviour
     {
         [Header("Existing playback path")]
         public CommonMotionPlayer targetPlayer;
@@ -29,7 +28,7 @@ namespace Utopia.Motion
         [Min(0)] public int testItemIndex = 0;
         [Min(0)] public int seed = 0;
         public bool playOnResponse = true;
-        [Header("Optional v0.2: Unity goal points (initial body/object/scene remain official)")]
+        [Header("Optional: Unity goal points (official scene)")]
         public bool useGoalOverrides = false;
         [Tooltip("Created by Fetch Case Goals. This marker is on the model ground plane, not the hip height.")]
         public Transform pelvisGoalMarker;
@@ -52,6 +51,28 @@ namespace Utopia.Motion
         private CommonMotionPlayer goalPlayer;
         private Transform goalRoot;
         public InfBaGelCaseGoals ReferenceGoals { get { return caseGoals; } }
+        [Header("Optional v0.3: Known-object INITIAL pose (not goal)")]
+        public bool useObjectStartOverride = false;
+        [Tooltip("Created by Fetch Initial Object. Move this input marker, NOT the animated output object. The origin/mesh use CommonMotion convention.")]
+        public Transform initialObjectMarker;
+        public bool showInitialObjectWire = true;
+        public string InitialObjectStatus { get; private set; } = "Fetch Initial Object after loading this official case.";
+        public bool InitialObjectReady
+        {
+            get
+            {
+                return initialObjectReference != null && initialObjectPlayer == targetPlayer && initialObjectMarker != null &&
+            initialObjectReference.scene_id == sceneId && initialObjectReference.test_item_index == testItemIndex;
+            }
+        }
+        public bool LastInitialObjectEchoVerified { get; private set; }
+        public bool LastInitialFrameVerified { get; private set; }
+        public double LastInitialObjectPositionErrorM { get; private set; } = -1;
+        public double LastInitialObjectRotationErrorDeg { get; private set; } = -1;
+        public int LastReleasedHandContacts { get; private set; }
+        private InfBaGelInitialObject initialObjectReference;
+        private CommonMotionPlayer initialObjectPlayer;
+        private Mesh initialObjectWireMesh;
         [Header("Optional: legacy CommonMotionHumanoidPreview only")]
         [Tooltip("Leave empty for CommonMotionHumanoidRetargeter v0.2. For the separate visual-copy Preview version, connect BuildPreview here once.")]
         public UnityEvent afterMotionLoaded = new UnityEvent();
@@ -78,9 +99,12 @@ namespace Utopia.Motion
             public UnityWebRequest web;
             public Coroutine routine;
             public CommonMotionPlayer player;
-            public bool health, fetchGoals, autoPlay;
-            public bool IsRead { get { return health || fetchGoals; } }
+            public bool health, fetchGoals, fetchInitial, autoPlay, validateHuman;
+            public InfBaGelHumanHistory humanHistory;
+            public string textOverride;
+            public bool IsRead { get { return health || fetchGoals || fetchInitial; } }
             public InfBaGelGoalOverrides goalOverrides;
+            public InfBaGelObjectStartOverride objectStart;
             public Matrix4x4 placement;
             public string url, body;
             public int timeout;
@@ -105,7 +129,7 @@ namespace Utopia.Motion
 
         private void Reset() { targetPlayer = GetComponent<CommonMotionPlayer>(); }
         private void OnDisable() { CancelWait(); }
-        private void OnDestroy() { CancelWait(); ReleaseRuntimeJson(); ClearGoalMarkers(); }
+        private void OnDestroy() { CancelWait(); ReleaseRuntimeJson(); ClearGoalMarkers(); ClearInitialObjectMarker(); }
 
         public void SetBearerToken(string token)
         {
@@ -129,7 +153,7 @@ namespace Utopia.Motion
         [ContextMenu("InfBaGel: Generate and play (Play Mode)")]
         public void GenerateAndPlay()
         {
-            try { RequestCase(sceneId, testItemIndex, seed, useGoalOverrides ? CaptureGoalMarkers() : null); }
+            try { RequestCase(sceneId, testItemIndex, seed, useGoalOverrides ? CaptureGoalMarkers() : null, useObjectStartOverride ? CaptureInitialObject() : null, useHumanHistory ? RequireHumanHistory() : null, useTextOverride ? instruction : null); }
             catch (Exception e) { Fail(e.Message); }
         }
 
@@ -228,7 +252,7 @@ namespace Utopia.Motion
         }
 
         /// <summary>Can be called by a UI/controller later. Returns false if not started.</summary>
-        public bool RequestCase(string selectedSceneId, int itemIndex = 0, int randomSeed = 0, InfBaGelGoalOverrides goals = null)
+        public bool RequestCase(string selectedSceneId, int itemIndex = 0, int randomSeed = 0, InfBaGelGoalOverrides goals = null, InfBaGelObjectStartOverride objectStart = null, InfBaGelHumanHistory humanHistory = null, string textOverride = null)
         {
             if (!CanBegin()) return false;
             try
@@ -238,19 +262,26 @@ namespace Utopia.Motion
                     throw new InvalidOperationException("Assign an enabled CommonMotionPlayer to Target Player.");
                 InfBaGelGenerateMotionRequest request = InfBaGelApiProtocol.Request(selectedSceneId, itemIndex, randomSeed);
                 InfBaGelGoalOverrides snapshot = goals == null ? null : InfBaGelApiProtocol.ValidateGoals(goals);
-                if (snapshot != null) InfBaGelGoalCoordinates.ValidatePlacement(targetPlayer.transform);
+                InfBaGelObjectStartOverride startSnapshot = objectStart == null ? null : InfBaGelObjectStartProtocol.Validate(objectStart);
+                if (snapshot != null || startSnapshot != null || humanHistory != null) InfBaGelGoalCoordinates.ValidatePlacement(targetPlayer.transform);
+                LastInitialObjectEchoVerified = LastInitialFrameVerified = false;
+                LastInitialObjectPositionErrorM = LastInitialObjectRotationErrorDeg = -1;
+                LastReleasedHandContacts = 0;
                 LastGoalEchoVerified = false;
                 LastFinalPelvisXZErrorM = LastFinalObjectErrorM = -1;
                 LastSentGoals = snapshot == null ? "Official case goals (no overrides)" : JsonUtility.ToJson(snapshot);
                 Begin(new Pending
                 {
                     goalOverrides = snapshot,
+                    objectStart = startSnapshot,
+                    humanHistory = humanHistory,
+                    textOverride = textOverride,
                     placement = targetPlayer.transform.localToWorldMatrix,
                     player = targetPlayer,
                     health = false,
                     autoPlay = playOnResponse,
                     url = InfBaGelApiProtocol.Endpoint(apiBaseUrl, "generate_motion"),
-                    body = InfBaGelApiProtocol.SerializeRequest(request, snapshot),
+                    body = InfBaGelHumanHistoryProtocol.Serialize(request, snapshot, startSnapshot, humanHistory, textOverride),
                     timeout = Mathf.Clamp(timeoutSeconds, 1, 600),
                     selectedCase = request,
                     expectedMotionId = targetPlayer.MotionId,
@@ -282,10 +313,10 @@ namespace Utopia.Motion
             LastError = "";
             LastHttpStatus = 0;
             LastHttpRoundtripMs = LastPlayerLoadMs = LastRequestToPlayCallMs = LastServerServiceMs = -1;
-            Status = request.health ? "CHECKING HEALTH..." : (request.fetchGoals ? "FETCHING CASE GOALS (no generation)..." : "GENERATING: one case; waiting for human + object motion...");
+            Status = request.validateHuman ? "VALIDATING HUMAN INPUT (no sampling)..." : request.health ? "CHECKING HEALTH..." : (request.fetchInitial ? "FETCHING INITIAL OBJECT (no generation)..." : request.fetchGoals ? "FETCHING CASE GOALS (no generation)..." : "GENERATING: one case; waiting for human + object motion...");
             if (!request.IsRead) LastCase = request.selectedCase.scene_id + "/" + request.selectedCase.test_item_index;
             // Old playback and its placement are left as-is while the server works.
-            Debug.Log("[INFBAGEL_CLIENT] " + (request.health ? "GET /health" : (request.fetchGoals ? "GET case goals" : "POST /generate_motion")), this);
+            Debug.Log("[INFBAGEL_CLIENT] " + (request.health ? "GET /health" : (request.fetchInitial ? "GET initial object" : request.fetchGoals ? "GET case goals" : "POST /generate_motion")), this);
             try { request.routine = StartCoroutine(Send(request)); }
             catch
             {
@@ -322,7 +353,7 @@ namespace Utopia.Motion
                 catch (Exception e) { startupError = e.Message; }
                 if (startupError != null) { Fail(startupError); yield break; }
 
-                int byteLimit = request.IsRead ? InfBaGelApiProtocol.MaxHealthBytes : InfBaGelApiProtocol.MaxResponseBytes;
+                int byteLimit = (request.IsRead || request.validateHuman) ? InfBaGelApiProtocol.MaxHealthBytes : InfBaGelApiProtocol.MaxResponseBytes;
                 while (!request.web.isDone)
                 {
                     if (!IsCurrent(request)) yield break;
@@ -352,12 +383,20 @@ namespace Utopia.Motion
                 {
                     if (!InfBaGelApiProtocol.IsJsonContentType(request.web.GetResponseHeader("Content-Type")))
                         throw new InvalidOperationException("Expected application/json; check the API URL.");
-                    if (request.health)
+                    if (request.validateHuman)
+                    {
+                        ReceiveHumanValidation(request, response);
+                    }
+                    else if (request.health)
                     {
                         InfBaGelApiHealth health = InfBaGelApiProtocol.ReadHealth(response);
                         LastServerApiVersion = health.api_version;
                         Status = health.busy ? "READY (server busy with another generation)" : "READY (server idle)";
                         Debug.Log("[INFBAGEL_CLIENT] " + Status, this);
+                    }
+                    else if (request.fetchInitial)
+                    {
+                        InstallInitialObject(request, InfBaGelObjectStartProtocol.ReadInitial(response, request.selectedCase.scene_id, request.selectedCase.test_item_index));
                     }
                     else if (request.fetchGoals)
                     {
@@ -385,11 +424,29 @@ namespace Utopia.Motion
                 throw new InvalidOperationException("Target Player changed/disabled during the request. Result was not applied.");
             if (player.MotionId != request.expectedMotionId || player.motionJson != request.expectedJson)
                 throw new InvalidOperationException("Player motion changed while waiting. Late response was not applied; do not request DART and InfBaGel simultaneously on one Player.");
-            if (request.goalOverrides != null && !InfBaGelGoalCoordinates.SamePlacement(request.placement, player.transform.localToWorldMatrix))
+            if ((request.goalOverrides != null || request.objectStart != null || request.humanHistory != null) && !InfBaGelGoalCoordinates.SamePlacement(request.placement, player.transform.localToWorldMatrix))
                 throw new InvalidOperationException("Preview placement changed while waiting. The result was not applied; keep Source/parent transforms fixed during generation.");
+            if (request.humanHistory != null && (player.IsPlaying || Mathf.Abs(player.CurrentFrame - request.humanHistory.source_frames[1]) > .001f))
+                throw new InvalidOperationException("Captured source advanced while waiting. Late result not applied; pause and capture again.");
             double loadStart = clock.Elapsed.TotalMilliseconds;
             CommonMotionClip validated = InfBaGelApiProtocol.ReadMotion(json, headerId, request.selectedCase);
-            InfBaGelApiProtocol.CheckGoalEcho(json, request.goalOverrides);
+            InfBaGelApiProtocol.CheckGoalEcho(json, request.goalOverrides, request.objectStart != null, request.humanHistory != null);
+            InfBaGelHumanHistoryProtocol.CheckOutput(validated, json, request.humanHistory, request.textOverride);
+            LastHumanFramesVerified = request.humanHistory != null;
+            if (LastHumanFramesVerified)
+            {
+                HumanHistoryStatus = "HUMAN FIXED FRAMES PASS: received body/object frames 0 and 3 match sent history. Playback starts at frame 3.";
+                Debug.Log("[INFBAGEL_HUMAN] " + HumanHistoryStatus, this);
+            }
+            if (request.textOverride != null) Debug.Log("[INFBAGEL_TEXT] TEXT ECHO PASS (not semantic-quality validation)", this);
+            InfBaGelObjectStartMetadata startMeta = InfBaGelObjectStartProtocol.CheckEcho(json, request.objectStart);
+            LastInitialObjectEchoVerified = startMeta != null;
+            if (startMeta != null)
+            {
+                LastReleasedHandContacts = startMeta.released_hand_contact_flags;
+                Debug.Log("[INFBAGEL_START] OBJECT START ECHO PASS: effective initial input matches sent pose; human/scene unchanged. released_hand_contacts=" + LastReleasedHandContacts, this);
+                RecordFirstObjectInputCheck(validated, request.objectStart);
+            }
             LastGoalEchoVerified = request.goalOverrides != null;
             if (LastGoalEchoVerified) Debug.Log("[INFBAGEL_GOALS] GOAL ECHO PASS: effective goals match the sent values; this is not a task-success test.", this);
             TextAsset next = new TextAsset(json) { name = validated.motion_id + ".common_motion (HTTP)", hideFlags = HideFlags.DontSave };
@@ -427,6 +484,7 @@ namespace Utopia.Motion
                 }
                 throw;
             }
+            if (request.humanHistory != null) player.SetFrame(3); // skip re-playing the older 0.1 s of history
             AdoptRuntimeJson(player, next, previous);
             LastMotionId = validated.motion_id;
             LastObjectAssetId = validated.objects[0].asset_id;
@@ -489,6 +547,133 @@ namespace Utopia.Motion
             if (ownedJson != null) Destroy(ownedJson);
             ownedJson = null; priorJson = null; assetOwner = null;
         }
+        [ContextMenu("InfBaGel: Fetch initial object (no generation)")]
+        public void FetchInitialObject()
+        {
+            if (!CanBegin()) return;
+            try
+            {
+                if (targetPlayer == null) targetPlayer = GetComponent<CommonMotionPlayer>();
+                if (targetPlayer == null || !targetPlayer.IsLoaded || targetPlayer.SpaceId != "infbagel_scene:" + sceneId)
+                    throw new InvalidOperationException("Load this same official InfBaGel case first with overrides OFF.");
+                InfBaGelGoalCoordinates.ValidatePlacement(targetPlayer.transform);
+                Begin(new Pending
+                {
+                    fetchInitial = true,
+                    player = targetPlayer,
+                    selectedCase = InfBaGelApiProtocol.Request(sceneId, testItemIndex, seed),
+                    url = InfBaGelObjectStartProtocol.InitialEndpoint(apiBaseUrl, sceneId, testItemIndex),
+                    timeout = 60
+                });
+            }
+            catch (Exception e) { Fail(e.Message); }
+        }
+        private void ClearInitialObjectMarker()
+        {
+            if (initialObjectMarker != null) { initialObjectMarker.gameObject.SetActive(false); Destroy(initialObjectMarker.gameObject); }
+            initialObjectMarker = null; initialObjectReference = null; initialObjectPlayer = null;
+            if (initialObjectWireMesh != null) Destroy(initialObjectWireMesh);
+            initialObjectWireMesh = null;
+        }
+        private void InstallInitialObject(Pending request, InfBaGelInitialObject s)
+        {
+            if (request.player == null || request.player != targetPlayer || s.scene_id != sceneId || s.test_item_index != testItemIndex)
+                throw new InvalidOperationException("Case/Player changed while loading initial object. Fetch again.");
+            InfBaGelGoalCoordinates.ValidatePlacement(targetPlayer.transform);
+            if (!targetPlayer.IsLoaded || targetPlayer.SpaceId != s.frame_id || targetPlayer.motionJson == null)
+                throw new InvalidOperationException("Load a matching InfBaGel motion before creating the initial-object marker.");
+            CommonMotionClip clip = JsonUtility.FromJson<CommonMotionClip>(targetPlayer.motionJson.text);
+            CommonMotionValidation.Validate(clip);
+            if (clip.objects.Length != 1 || clip.objects[0].asset_id != s.object_name || clip.objects[0].mesh == null)
+                throw new InvalidOperationException("Loaded object mesh is not the selected case's asset. Generate that official case first.");
+            ClearInitialObjectMarker(); initialObjectReference = s; initialObjectPlayer = targetPlayer;
+            GameObject go = new GameObject("Initial Object Pose INPUT (not animated output)");
+            go.hideFlags = HideFlags.DontSave;
+            initialObjectMarker = go.transform; initialObjectMarker.SetParent(targetPlayer.transform, false);
+            initialObjectMarker.localPosition = InfBaGelGoalCoordinates.NativeToCommon(InfBaGelGoalCoordinates.FromArray(s.position_m));
+            initialObjectMarker.localRotation = InfBaGelObjectStartProtocol.MirrorRotation(InfBaGelObjectStartProtocol.FromArray(s.rotation_xyzw));
+            initialObjectWireMesh = new Mesh { name = "Initial object reference wire mesh", hideFlags = HideFlags.DontSave };
+            initialObjectWireMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            initialObjectWireMesh.vertices = clip.objects[0].mesh.vertices_m;
+            initialObjectWireMesh.triangles = clip.objects[0].mesh.triangles;
+            initialObjectWireMesh.RecalculateBounds();
+            targetPlayer.Pause(); targetPlayer.SetFrame(0);
+            InitialObjectStatus = "INITIAL OBJECT READY: wireframe is input at original pose. Human/scene/goals unchanged.";
+            Status = "INITIAL OBJECT LOADED (no inference)";
+            Debug.Log("[INFBAGEL_START] " + InitialObjectStatus, this);
+        }
+        public InfBaGelObjectStartOverride CaptureInitialObject()
+        {
+            if (!InitialObjectReady) throw new InvalidOperationException("Fetch Initial Object first (again after changing case/Player).");
+            if (!targetPlayer.IsLoaded || targetPlayer.SpaceId != initialObjectReference.frame_id)
+                throw new InvalidOperationException("Player's coordinate frame changed; reload the selected case.");
+            if ((initialObjectMarker.localScale - Vector3.one).sqrMagnitude > 1e-8f)
+                throw new InvalidOperationException("Do not scale the initial object. v0.3 changes pose only.");
+            Vector3 p = InfBaGelGoalCoordinates.WorldToNative(targetPlayer.transform, initialObjectMarker.position);
+            Quaternion q = InfBaGelObjectStartProtocol.WorldToNativeRotation(targetPlayer.transform, initialObjectMarker.rotation);
+            Vector3 oldp = InfBaGelGoalCoordinates.FromArray(initialObjectReference.position_m);
+            Quaternion oldq = InfBaGelObjectStartProtocol.FromArray(initialObjectReference.rotation_xyzw);
+            if (Mathf.Abs(p.y - oldp.y) > 0.001f || Vector3.Distance(p, oldp) > 0.500001f)
+                throw new InvalidOperationException("v0.3: horizontal shifts up to 0.50m; keep original origin height.");
+            Quaternion delta = q * Quaternion.Inverse(oldq);
+            if ((delta * Vector3.up - Vector3.up).magnitude > 0.001f || Quaternion.Angle(q, oldq) > 30.01f)
+                throw new InvalidOperationException("v0.3: world-up yaw changes up to 30 degrees; preserve original tilt.");
+            return InfBaGelObjectStartProtocol.Validate(new InfBaGelObjectStartOverride
+            {
+                object_name = initialObjectReference.object_name,
+                position_m = InfBaGelGoalCoordinates.ToArray(p),
+                rotation_xyzw = InfBaGelObjectStartProtocol.ToArray(q)
+            });
+        }
+        public void CheckOriginalInitialObjectRoundTrip()
+        {
+            try
+            {
+                InfBaGelObjectStartOverride s = CaptureInitialObject();
+                float dp = Vector3.Distance(InfBaGelGoalCoordinates.FromArray(s.position_m), InfBaGelGoalCoordinates.FromArray(initialObjectReference.position_m));
+                float da = Quaternion.Angle(InfBaGelObjectStartProtocol.FromArray(s.rotation_xyzw), InfBaGelObjectStartProtocol.FromArray(initialObjectReference.rotation_xyzw));
+                InitialObjectStatus = string.Format(CultureInfo.InvariantCulture, "{0}: position={1:F6}m rotation={2:F4}deg (conversion only)",
+                    dp <= 0.001f && da <= 0.1f ? "ORIGINAL START ROUNDTRIP PASS" : "INITIAL OBJECT MOVED FROM ORIGINAL", dp, da);
+                Debug.Log("[INFBAGEL_START] " + InitialObjectStatus, this);
+            }
+            catch (Exception e) { InitialObjectStatus = e.Message; Fail(e.Message); }
+        }
+        public void ShiftInitialObject(float localX)
+        {
+            if (!InitialObjectReady || IsBusy) return;
+            InfBaGelGoalCoordinates.ValidatePlacement(targetPlayer.transform);
+            initialObjectMarker.position += targetPlayer.transform.TransformVector(new Vector3(localX, 0, 0));
+            InitialObjectStatus = "Only the INPUT object moved. Human start, goals, and scene were not moved.";
+        }
+        public void YawInitialObject(float degrees)
+        {
+            if (!InitialObjectReady || IsBusy) return;
+            initialObjectMarker.rotation = Quaternion.AngleAxis(degrees, Vector3.up) * initialObjectMarker.rotation;
+            InitialObjectStatus = "Only INPUT object yaw changed; original pitch/roll retained.";
+        }
+        private void OnDrawGizmos()
+        {
+            if (showInitialObjectWire && initialObjectMarker != null && initialObjectWireMesh != null)
+            {
+                Gizmos.color = new Color(0.2f, 1f, 0.7f, 1f);
+                Gizmos.DrawWireMesh(initialObjectWireMesh, initialObjectMarker.position, initialObjectMarker.rotation, Vector3.one);
+                Gizmos.DrawWireSphere(initialObjectMarker.position, 0.07f);
+            }
+        }
+        private void RecordFirstObjectInputCheck(CommonMotionClip clip, InfBaGelObjectStartOverride s)
+        {
+            if (s == null) return;
+            if (clip.objects.Length != 1 || clip.objects[0].asset_id != s.object_name)
+                throw new InvalidOperationException("Response initial object asset differs from requested asset.");
+            ObjectFrame first = clip.objects[0].frames[0];
+            LastInitialObjectPositionErrorM = Vector3.Distance(first.position_m, InfBaGelGoalCoordinates.NativeToCommon(InfBaGelGoalCoordinates.FromArray(s.position_m)));
+            LastInitialObjectRotationErrorDeg = Quaternion.Angle(first.rotation_xyzw, InfBaGelObjectStartProtocol.MirrorRotation(InfBaGelObjectStartProtocol.FromArray(s.rotation_xyzw)));
+            LastInitialFrameVerified = LastInitialObjectPositionErrorM <= 0.001 && LastInitialObjectRotationErrorDeg <= 0.1;
+            string text = string.Format(CultureInfo.InvariantCulture, "[INFBAGEL_START] FIRST OBJECT FRAME {0}: position={1:F6}m rotation={2:F4}deg. This is initial-state agreement, NOT grasp success.",
+                LastInitialFrameVerified ? "PASS" : "MISMATCH", LastInitialObjectPositionErrorM, LastInitialObjectRotationErrorDeg);
+            if (LastInitialFrameVerified) Debug.Log(text, this); else Debug.LogWarning(text, this);
+        }
+
         private void Fail(string message)
         {
             LastError = message;
