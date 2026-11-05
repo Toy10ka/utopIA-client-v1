@@ -97,14 +97,21 @@ namespace Utopia.Motion
 
         public static InfBaGelHumanHistory Capture(CommonMotionClip clip, string json, string scene, int item, int endFrame)
         {
-            if (clip == null || clip.space.frame_id != "infbagel_scene:" + scene || clip.time.fps != 30f)
-                throw new ArgumentException("Load a 30fps InfBaGel motion from this same scene.");
+            if (clip == null || string.IsNullOrEmpty(clip.space.frame_id) || clip.time.fps != 30f)
+                throw new ArgumentException("Load a 30fps InfBaGel motion with a source frame.");
             InfBaGelGenerationMetadata metadata = Metadata(json);
+            if (clip.space.frame_id != "infbagel_scene:" + scene)
+            {
+                SceneMotionEnvelope sceneMeta = JsonUtility.FromJson<SceneMotionEnvelope>(json);
+                InfBaGelSceneMetadata env = sceneMeta != null && sceneMeta.source != null && sceneMeta.source.api_generation != null ? sceneMeta.source.api_generation.environment_input : null;
+                if (env == null || env.environment == null || clip.space.frame_id != env.environment.FrameId)
+                    throw new ArgumentException("Registered-environment source provenance is missing or inconsistent.");
+            }
             InfBaGelHistorySupport support = metadata.history_support;
             if (metadata.scene_id != scene || metadata.test_item_index != item || support == null ||
                 !support.available || support.frame_stride != 3 || Mathf.Abs(support.interval_s - .1f) > 1e-6f ||
                 support.resampling != "uniform_10_to_30_hold_last_v1")
-                throw new ArgumentException("Generate a NEW official case using API v0.4 first. v0.3/DART clips lack the matching raw contact history.");
+                throw new ArgumentException("Generate a NEW InfBaGel motion with resume support (registered room: API v0.6 unity-scene-r2). Legacy or DART-only clips lack the matching raw contact ledger.");
             if (endFrame < 3 || endFrame > clip.time.frame_count - 3 || endFrame % 3 != 0)
                 throw new ArgumentException("History end must be a valid multiple-of-3 frame >=3 before the held tail.");
             if (clip.objects == null || clip.objects.Length != 1)

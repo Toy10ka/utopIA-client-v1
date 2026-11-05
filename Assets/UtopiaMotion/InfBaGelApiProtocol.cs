@@ -6,9 +6,9 @@ using UnityEngine;
 
 namespace Utopia.Motion
 {
-    // InfBaGel_API_v0_1/infbagel_api/contracts.py. Selects one official case;
-    // v0.3 supports optional goals and a known-object initial pose; no arbitrary text,
-    // measured avatar history, new meshes, or Unity scene geometry.
+    // Basic known-case request identity. Optional history, text, initial placement
+    // and environment fields are serialized by their independent protocols.
+    // The selected case still supplies known assets/task metadata.
     [Serializable]
     public sealed class InfBaGelGenerateMotionRequest
     {
@@ -48,8 +48,7 @@ namespace Utopia.Motion
         public string initial_state;
     }
     [Serializable] public sealed class InfBaGelEffectiveGoals { public float[] pelvis_goal; public float[] object_goal; }
-    [Serializable]
-    public sealed class InfBaGelGoalInputMetadata
+    [Serializable] public sealed class InfBaGelGoalInputMetadata
     {
         public string coordinate_frame;
         public bool overrides_applied;
@@ -79,15 +78,16 @@ namespace Utopia.Motion
     // Read only the identifying metadata added by the existing server. This does not
     // change CommonMotionClip or make the shared player depend on InfBaGel.
     [Serializable] public sealed class InfBaGelMotionEnvelope { public InfBaGelMotionSource source; }
-    [Serializable]
-    public sealed class InfBaGelMotionSource
+    [Serializable] public sealed class InfBaGelMotionSource
     {
         public string backend;
         public InfBaGelGenerationMetadata api_generation;
     }
-    [Serializable]
-    public sealed class InfBaGelGenerationMetadata
+    [Serializable] public sealed class InfBaGelGenerationMetadata
     {
+        public string code_revision;
+        public string start_source;
+        public InfBaGelInitialStateReport initial_state_input;
         public InfBaGelHistorySupport history_support;
         public InfBaGelHistoryReport human_history_input;
         public InfBaGelTextReport text_input;
@@ -139,7 +139,7 @@ namespace Utopia.Motion
             Request(scene, itemIndex, 0);
             // Endpoint() validates the base URL; replace only the final fixed route.
             string health = Endpoint(baseUrl, "health");
-            return health.Substring(0, health.Length - "health".Length) + "cases/" +
+            return health.Substring(0, health.Length-"health".Length) + "cases/" +
                 Uri.EscapeDataString(scene) + "/items/" + itemIndex.ToString(CultureInfo.InvariantCulture) + "/goals";
         }
 
@@ -147,60 +147,52 @@ namespace Utopia.Motion
         {
             if (goals == null || goals.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame)
                 throw new ArgumentException("Goals must use infbagel_scene_y_up_m.");
-            Vector3 pelvis = InfBaGelGoalCoordinates.FromArray(goals.pelvis_goal);
-            Vector3 obj = InfBaGelGoalCoordinates.FromArray(goals.object_goal);
+            Vector3 pelvis=InfBaGelGoalCoordinates.FromArray(goals.pelvis_goal);
+            Vector3 obj=InfBaGelGoalCoordinates.FromArray(goals.object_goal);
             if (pelvis.y != 0f) throw new ArgumentException("Pelvis Goal marker represents a ground-plane destination (native y=0), not hip height.");
-            foreach (float x in goals.pelvis_goal) if (Mathf.Abs(x) > 1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
-            foreach (float x in goals.object_goal) if (Mathf.Abs(x) > 1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
+            foreach (float x in goals.pelvis_goal) if (Mathf.Abs(x)>1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
+            foreach (float x in goals.object_goal) if (Mathf.Abs(x)>1000f) throw new ArgumentException("Goal exceeds the API coordinate limit.");
             // Snapshot values so later marker movement cannot mutate an in-flight request.
-            return new InfBaGelGoalOverrides
-            {
-                coordinate_frame = goals.coordinate_frame,
-                pelvis_goal = InfBaGelGoalCoordinates.ToArray(pelvis),
-                object_goal = InfBaGelGoalCoordinates.ToArray(obj)
-            };
+            return new InfBaGelGoalOverrides { coordinate_frame=goals.coordinate_frame,
+                pelvis_goal=InfBaGelGoalCoordinates.ToArray(pelvis), object_goal=InfBaGelGoalCoordinates.ToArray(obj) };
         }
 
         public static string SerializeRequest(InfBaGelGenerateMotionRequest request, InfBaGelGoalOverrides goals)
         {
-            if (goals == null) return JsonUtility.ToJson(request); // v0.1 wire format stays byte-for-byte structurally compatible.
-            return JsonUtility.ToJson(new InfBaGelGenerateWithGoalsRequest
-            {
-                scene_id = request.scene_id,
-                test_item_index = request.test_item_index,
-                seed = request.seed,
-                goal_overrides = ValidateGoals(goals)
-            });
+            if (goals==null) return JsonUtility.ToJson(request); // v0.1 wire format stays byte-for-byte structurally compatible.
+            return JsonUtility.ToJson(new InfBaGelGenerateWithGoalsRequest {
+                scene_id=request.scene_id, test_item_index=request.test_item_index, seed=request.seed,
+                goal_overrides=ValidateGoals(goals) });
         }
 
         public static InfBaGelCaseGoals ReadCaseGoals(string json, string scene, int itemIndex)
         {
-            if (string.IsNullOrWhiteSpace(json) || Encoding.UTF8.GetByteCount(json) > MaxHealthBytes)
+            if (string.IsNullOrWhiteSpace(json) || Encoding.UTF8.GetByteCount(json)>MaxHealthBytes)
                 throw new ArgumentException("Invalid case-goals response.");
-            InfBaGelCaseGoals result = JsonUtility.FromJson<InfBaGelCaseGoals>(json);
-            if (result == null || result.scene_id != scene || result.test_item_index != itemIndex ||
-                result.frame_id != "infbagel_scene:" + scene || result.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame ||
-                result.initial_state != "original_official_case_including_original_heading" || string.IsNullOrWhiteSpace(result.object_name))
+            InfBaGelCaseGoals result=JsonUtility.FromJson<InfBaGelCaseGoals>(json);
+            if (result==null || result.scene_id!=scene || result.test_item_index!=itemIndex ||
+                result.frame_id!="infbagel_scene:"+scene || result.coordinate_frame!=InfBaGelGoalCoordinates.NativeFrame ||
+                result.initial_state!="original_official_case_including_original_heading" || string.IsNullOrWhiteSpace(result.object_name))
                 throw new ArgumentException("Case/frame metadata differs from the request. Check that the server is API v0.2.");
             InfBaGelGoalCoordinates.FromArray(result.start_location);
-            ValidateGoals(new InfBaGelGoalOverrides { pelvis_goal = result.pelvis_goal, object_goal = result.object_goal });
+            ValidateGoals(new InfBaGelGoalOverrides {pelvis_goal=result.pelvis_goal,object_goal=result.object_goal});
             return result;
         }
 
         public static void CheckGoalEcho(string json, InfBaGelGoalOverrides expected, bool objectStartRequested = false, bool humanHistoryRequested = false)
         {
-            if (expected == null) return;
-            InfBaGelMotionEnvelope envelope = JsonUtility.FromJson<InfBaGelMotionEnvelope>(json);
-            InfBaGelGoalInputMetadata goals = envelope != null && envelope.source != null && envelope.source.api_generation != null ?
+            if(expected==null) return;
+            InfBaGelMotionEnvelope envelope=JsonUtility.FromJson<InfBaGelMotionEnvelope>(json);
+            InfBaGelGoalInputMetadata goals=envelope!=null && envelope.source!=null && envelope.source.api_generation!=null ?
                 envelope.source.api_generation.goal_input : null;
-            if (goals == null || !goals.overrides_applied || goals.effective == null || goals.original == null ||
-                goals.coordinate_frame != InfBaGelGoalCoordinates.NativeFrame ||
-                goals.initial_state != (humanHistoryRequested ? "captured_commonmotion_human_and_object_history" : objectStartRequested ? "official_human_with_object_start_override" : "original_official_case_including_original_heading"))
+            if (goals==null || !goals.overrides_applied || goals.effective==null || goals.original==null ||
+                goals.coordinate_frame!=InfBaGelGoalCoordinates.NativeFrame ||
+                goals.initial_state!=(humanHistoryRequested ? "captured_commonmotion_human_and_object_history" : objectStartRequested ? "official_human_with_object_start_override" : "original_official_case_including_original_heading"))
                 throw new ArgumentException("Response does not confirm goal overrides with fixed initial state. Motion was not applied.");
-            float tolerance = InfBaGelGoalCoordinates.PositionToleranceM;
-            if (Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.pelvis_goal), InfBaGelGoalCoordinates.FromArray(expected.pelvis_goal)) > tolerance ||
-                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.object_goal), InfBaGelGoalCoordinates.FromArray(expected.object_goal)) > tolerance ||
-                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.initial_alignment_pelvis_goal), InfBaGelGoalCoordinates.FromArray(goals.original.pelvis_goal)) > tolerance)
+            float tolerance=InfBaGelGoalCoordinates.PositionToleranceM;
+            if (Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.pelvis_goal),InfBaGelGoalCoordinates.FromArray(expected.pelvis_goal))>tolerance ||
+                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.effective.object_goal),InfBaGelGoalCoordinates.FromArray(expected.object_goal))>tolerance ||
+                Vector3.Distance(InfBaGelGoalCoordinates.FromArray(goals.initial_alignment_pelvis_goal),InfBaGelGoalCoordinates.FromArray(goals.original.pelvis_goal))>tolerance)
                 throw new ArgumentException("Server effective goals/initial heading disagree with the request. Motion was not applied.");
         }
 
@@ -223,7 +215,7 @@ namespace Utopia.Motion
         }
 
         /// <summary>Checks identity, shared skeleton/mesh/time contract, and selected case before replacing playback.</summary>
-        public static CommonMotionClip ReadMotion(string json, string headerMotionId, InfBaGelGenerateMotionRequest expected)
+        public static CommonMotionClip ReadMotion(string json, string headerMotionId, InfBaGelGenerateMotionRequest expected, string expectedFrameId = null)
         {
             if (expected == null) throw new ArgumentException("Missing expected case request.");
             if (string.IsNullOrWhiteSpace(json)) throw new ArgumentException("API returned an empty response.");
@@ -233,7 +225,7 @@ namespace Utopia.Motion
             if (clip == null || clip.time == null || clip.time.frame_count > MaxResponseFrames)
                 throw new ArgumentException("Response is not a supported CommonMotion document or exceeds the frame limit.");
             CommonMotionValidation.Validate(clip);
-            if (clip.space.frame_id != "infbagel_scene:" + expected.scene_id)
+            if(clip.space.frame_id!=(expectedFrameId ?? ("infbagel_scene:"+expected.scene_id)))
                 throw new ArgumentException("Returned CommonMotion frame_id differs from the selected scene.");
             if (clip.motion_id == null || !MotionIdPattern.IsMatch(clip.motion_id))
                 throw new ArgumentException("Missing/invalid InfBaGel motion_id.");

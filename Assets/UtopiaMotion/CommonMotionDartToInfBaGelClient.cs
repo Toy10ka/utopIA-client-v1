@@ -26,8 +26,9 @@ namespace Utopia.Motion
         [Min(0)] public int referenceObjectFrame = 0;
         [Tooltip("contact-r2: manually inspect BOTH captured times. BOTH hands and BOTH feet must be clear of the manipulated object. This is NOT a foot-floor contact setting.")]
         public bool confirmUnheldStaticObject = false;
-        [Tooltip("Opt-in experiment: CHOIS defines four limb-to-object channels, but equivalence of InfBaGel channels 2/3 is still unverified. Initial values are all zero ONLY for the non-contact test. Default OFF.")]
-        public bool acceptProvisionalContactSchema = false;
+        [Header("Optional v0.6 registered Unity environment")]
+        public bool useRegisteredEnvironment = false;
+        public CommonMotionSceneEnvironment sceneEnvironment;
         [Header("Generation (case/URL/seed are taken from the existing InfBaGel client)")]
         public bool playOnResponse = true;
         public bool useTextOverride = false;
@@ -49,6 +50,12 @@ namespace Utopia.Motion
         private string referenceScene;
         private int referenceItem;
         private Matrix4x4 referencePlacement;
+        public Matrix4x4 ReferencePlacement { get { return referencePlacement; } }
+        public InfBaGelEffectiveGoals ReferenceGoals { get; private set; }
+        private Matrix4x4 capturedTargetPlacement;
+        private InfBaGelEnvironmentRef capturedEnvironment;
+        private InfBaGelGoalOverrides capturedGoals;
+        private bool captureUsedEnvironment;
         private Transform sceneRoot, objectMarker;
         private Mesh previewMesh;
         private InfBaGelDartHistory capture;
@@ -78,6 +85,7 @@ namespace Utopia.Motion
             if (IsBusy) return false;
             if (player == null || infBaGelClient == null) { Fail("Assign Player and existing InfBaGel client."); return false; }
             if (infBaGelClient.targetPlayer != player) { Fail("Use the same Player as the existing InfBaGel client."); return false; }
+            if (sceneEnvironment != null && sceneEnvironment.sceneGenerationClient != null && sceneEnvironment.sceneGenerationClient.IsBusy) { Fail("Wait for the room generation client."); return false; }
             if (infBaGelClient.IsBusy) { Fail("Wait for the existing InfBaGel request to finish."); return false; }
             return true;
         }
@@ -104,6 +112,7 @@ namespace Utopia.Motion
                 if (referenceObjectFrame >= clip.time.frame_count) throw new ArgumentException("Reference Object Frame is outside the clip.");
                 ClearReference(); referenceClip = clip; referenceScene = m.scene_id; referenceItem = m.test_item_index;
                 referencePlacement = player.transform.localToWorldMatrix;
+                ReferenceGoals = m.goal_input == null ? null : m.goal_input.effective;
                 GameObject root = new GameObject("InfBaGel scene reference v0.5 (temporary)"); root.hideFlags = HideFlags.DontSave;
                 sceneRoot = root.transform; sceneRoot.SetPositionAndRotation(player.transform.position, player.transform.rotation);
                 sceneRoot.localScale = Vector3.one;
@@ -187,22 +196,45 @@ namespace Utopia.Motion
                 RequireDart();
                 if (Vector3.Distance(objectMarker.lossyScale, Vector3.one) > .0001f) throw new InvalidOperationException("Do not scale the input object.");
                 int i = Mathf.Clamp(Mathf.FloorToInt(player.CurrentFrame),0,player.FrameCount-1); player.SetFrame(i);
-                Matrix4x4 mapping = referencePlacement.inverse * player.transform.localToWorldMatrix;
-                ObjectFrame o = new ObjectFrame { position_m = sceneRoot.InverseTransformPoint(objectMarker.position),
-                    rotation_xyzw = Quaternion.Inverse(sceneRoot.rotation) * objectMarker.rotation };
+                captureUsedEnvironment = useRegisteredEnvironment;
+                capturedEnvironment = null; capturedGoals = null;
+                capturedTargetPlacement = referencePlacement;
+                if (useRegisteredEnvironment)
+                {
+                    if (sceneEnvironment == null) throw new InvalidOperationException("Assign Scene Environment.");
+                    sceneEnvironment.RequireCurrent();
+                    capturedEnvironment = JsonUtility.FromJson<InfBaGelEnvironmentRef>(JsonUtility.ToJson(sceneEnvironment.Reference));
+                    capturedGoals = sceneEnvironment.ReadGoals();
+                    capturedTargetPlacement = sceneEnvironment.roomFrame.localToWorldMatrix;
+                }
+                Matrix4x4 mapping = capturedTargetPlacement.inverse * player.transform.localToWorldMatrix;
+                ObjectFrame o = new ObjectFrame { position_m = capturedTargetPlacement.inverse.MultiplyPoint3x4(objectMarker.position),
+                    rotation_xyzw = Quaternion.Inverse(capturedTargetPlacement.rotation) * objectMarker.rotation };
                 capture = InfBaGelDartHistoryProtocol.Capture(player.Clip, player.motionJson.text, i,
-                    "infbagel_scene:" + referenceScene, mapping, referenceClip.objects[0].asset_id, o, confirmUnheldStaticObject, acceptProvisionalContactSchema);
+                    capturedEnvironment == null ? "infbagel_scene:" + referenceScene : capturedEnvironment.FrameId,
+                    mapping, referenceClip.objects[0].asset_id, o, confirmUnheldStaticObject);
                 capturedJson = player.motionJson; capturedPlacement = player.transform.localToWorldMatrix;
                 capturedObjectPlacement = objectMarker.localToWorldMatrix; InputValidated = OutputFramesVerified = false;
-                Say("DART CAPTURED: frames " + capture.source_frames[0] + ", " + capture.source_frames[1] + "; exact body hash " + capture.body_profile.body_model_sha256 + "; static object, BOTH hands/feet clear. CONTACT SCHEMA PROVISIONAL; zero initial contact4, not verified semantics.");
+                Say("DART CAPTURED: frames " + capture.source_frames[0] + ", " + capture.source_frames[1] + "; exact body hash " + capture.body_profile.body_model_sha256 + "; static object, BOTH hands/feet clear. zero initial contact4; schema evidence is recorded in server metadata.");
             }
             catch (Exception e) { capture = null; Fail(e.Message); }
         }
         private void CheckCapture()
         {
             RequireDart();
-            if (!confirmUnheldStaticObject || !acceptProvisionalContactSchema)
-                throw new InvalidOperationException("Contact-r2 confirmations were removed. Inspect the two poses and explicitly confirm the provisional non-contact test before recapturing.");
+            if (!confirmUnheldStaticObject)
+                throw new InvalidOperationException("Confirm that both hands and feet are clear of the static manipulated object.");
+            if (useRegisteredEnvironment != captureUsedEnvironment)
+                throw new InvalidOperationException("Environment mode changed. Capture again.");
+            if (captureUsedEnvironment)
+            {
+                if (sceneEnvironment == null) throw new InvalidOperationException("Missing Scene Environment.");
+                sceneEnvironment.RequireCurrent();
+                if (!InfBaGelSceneProtocol.Same(capturedEnvironment, sceneEnvironment.Reference) ||
+                    !InfBaGelGoalCoordinates.SamePlacement(capturedTargetPlacement,sceneEnvironment.roomFrame.localToWorldMatrix) ||
+                    JsonUtility.ToJson(capturedGoals)!=JsonUtility.ToJson(sceneEnvironment.ReadGoals()))
+                    throw new InvalidOperationException("Registered room / goals changed. Capture again before generating.");
+            }
             if (capture == null || player.motionJson != capturedJson || player.IsPlaying ||
                 Mathf.Abs(player.CurrentFrame-capture.source_frames[1]) > .001f ||
                 !InfBaGelGoalCoordinates.SamePlacement(capturedPlacement,player.transform.localToWorldMatrix) ||
@@ -218,10 +250,10 @@ namespace Utopia.Motion
             {
                 CheckCapture();
                 InfBaGelGenerateMotionRequest basic = InfBaGelApiProtocol.Request(referenceScene, referenceItem, infBaGelClient.seed);
-                InfBaGelGoalOverrides goals = null;
+                InfBaGelGoalOverrides goals = capturedGoals;
                 InfBaGelDartHistory snapshot = JsonUtility.FromJson<InfBaGelDartHistory>(JsonUtility.ToJson(capture));
                 string text = useTextOverride ? instruction : null;
-                string body = InfBaGelDartHistoryProtocol.Serialize(basic, goals, snapshot, text);
+                string body = InfBaGelSceneProtocol.AddEnvironment(InfBaGelDartHistoryProtocol.Serialize(basic, goals, snapshot, text), capturedEnvironment);
                 string url = InfBaGelApiProtocol.Endpoint(infBaGelClient.apiBaseUrl, "generate_motion");
                 if (validateOnly) url = url.Substring(0,url.Length-"generate_motion".Length) + "validate_human_start";
                 routine = StartCoroutine(Send(url,body,basic,snapshot,text,validateOnly));
@@ -271,7 +303,19 @@ namespace Utopia.Motion
         }
         private void ApplyResponse(string json,string id,InfBaGelGenerateMotionRequest basic,InfBaGelDartHistory sent,string text,Stopwatch clock)
         {
-            CommonMotionClip clip = InfBaGelApiProtocol.ReadMotion(json,id,basic);
+            CommonMotionClip clip = InfBaGelApiProtocol.ReadMotion(json,id,basic,capturedEnvironment == null ? null : capturedEnvironment.FrameId);
+            if (capturedEnvironment != null)
+            {
+                InfBaGelSceneProtocol.CheckEcho(json,capturedEnvironment);
+                var m = InfBaGelHumanHistoryProtocol.Metadata(json);
+                if (m.goal_input==null || !m.goal_input.overrides_applied || m.goal_input.effective==null)
+                    throw new InvalidOperationException("Room goals were not acknowledged.");
+                for (int a=0;a<3;++a)
+                    if (Mathf.Abs(m.goal_input.effective.pelvis_goal[a]-capturedGoals.pelvis_goal[a])>1e-5f ||
+                        Mathf.Abs(m.goal_input.effective.object_goal[a]-capturedGoals.object_goal[a])>1e-5f)
+                        throw new InvalidOperationException("Room goal echo differs from request.");
+                Debug.Log("[INFBAGEL_ENV] ENVIRONMENT ECHO PASS: " + capturedEnvironment.environment_id + " / " + capturedEnvironment.revision.Substring(0,12),this);
+            }
             InfBaGelHumanHistoryProtocol.CheckOutput(clip,json,InfBaGelDartHistoryProtocol.Expected(sent),text);
             DartSourceEnvelope source = JsonUtility.FromJson<DartSourceEnvelope>(json);
             if (source == null || source.source == null || source.source.body_model_sha256 != sent.body_profile.body_model_sha256)
@@ -285,9 +329,9 @@ namespace Utopia.Motion
                 if (Vector3.Distance(clip.skeleton.rest_offsets_m[j], sent.body_profile.rest_offsets_m[j]) > .0005f)
                     throw new InvalidOperationException("Response rest skeleton differs from DART.");
             float worldError = Vector3.Distance(capturedPlacement.MultiplyPoint3x4(sent.samples[1].human.pelvis_position_m),
-                referencePlacement.MultiplyPoint3x4(clip.human.frames[3].pelvis_position_m));
+                capturedTargetPlacement.MultiplyPoint3x4(clip.human.frames[3].pelvis_position_m));
             float worldAngle = Quaternion.Angle(capturedPlacement.rotation * sent.samples[1].human.root_rotation_xyzw,
-                referencePlacement.rotation * clip.human.frames[3].root_rotation_xyzw);
+                capturedTargetPlacement.rotation * clip.human.frames[3].root_rotation_xyzw);
             if (worldError > .001f || worldAngle > .1f) throw new InvalidOperationException("World start continuity check failed.");
             Debug.Log("[DART_TO_INFBAGEL] WORLD POSE CONTINUITY PASS: pelvis=" + worldError.ToString("G4") + "m root=" + worldAngle.ToString("G4") + "deg (source skeleton, not contact quality)",this);
             Vector3 oldPosition=player.transform.position; Quaternion oldRotation=player.transform.rotation;
@@ -297,7 +341,7 @@ namespace Utopia.Motion
             {
                 // New clip is expressed in remembered InfBaGel scene coords. Place it
                 // with THAT transform, not the former DART-local transform. World pose stays continuous.
-                player.transform.SetPositionAndRotation(sceneRoot.position,sceneRoot.rotation);
+                player.transform.SetPositionAndRotation(capturedTargetPlacement.MultiplyPoint3x4(Vector3.zero),capturedTargetPlacement.rotation);
                 player.motionJson=next;player.LoadJson(json);player.SetFrame(3);afterMotionLoaded?.Invoke();
                 if(!player.IsLoaded || player.MotionId!=clip.motion_id) throw new InvalidOperationException("Player did not load the response.");
             }

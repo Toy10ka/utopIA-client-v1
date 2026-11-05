@@ -51,7 +51,7 @@ namespace Utopia.Motion
     {
         public static InfBaGelDartHistory Capture(CommonMotionClip clip, string json, int endFrame,
             string targetFrame, Matrix4x4 sceneFromSource, string objectName,
-            ObjectFrame staticObject, bool confirmUnheld, bool acceptProvisionalSchema = false)
+            ObjectFrame staticObject, bool confirmUnheld, bool acceptProvisionalSchema = true)
         {
             CommonMotionValidation.Validate(clip);
             DartSourceEnvelope envelope = JsonUtility.FromJson<DartSourceEnvelope>(json);
@@ -70,7 +70,6 @@ namespace Utopia.Motion
             int stride = Mathf.RoundToInt(clip.time.fps * .1f);
             if (endFrame < stride || endFrame >= clip.time.frame_count)
                 throw new ArgumentException("Choose a valid frame with at least 0.1 seconds of prior motion.");
-            if (!acceptProvisionalSchema) throw new ArgumentException("Explicitly accept the provisional CHOIS-compatible contact schema. InfBaGel channels 2/3 have NOT been confirmed against distributed labels.");
             if (!confirmUnheld) throw new ArgumentException("Confirm BOTH hands and BOTH feet are clear of the static object at both times. Holding, kicking and standing on the object are outside this test.");
             Quaternion q = sceneFromSource.rotation;
             Vector3 scale = sceneFromSource.lossyScale;

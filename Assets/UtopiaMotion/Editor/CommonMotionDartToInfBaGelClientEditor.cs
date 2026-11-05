@@ -11,7 +11,7 @@ namespace Utopia.Motion.Editor
             DrawDefaultInspector();
             CommonMotionDartToInfBaGelClient c = (CommonMotionDartToInfBaGelClient)target;
             EditorGUILayout.HelpBox("v0.5: DART SOURCE body (not avatar bones) + a STATIC UNHELD known object. Official scene/goal/task remain. First load an InfBaGel case and save its scene reference. Then load DART, inspect placement, capture, validate, generate. Existing v0.4 controls are not replaced.", MessageType.Info);
-            EditorGUILayout.HelpBox("contact-r2: CHOIS defines left/right hand + left/right FOOT contact with the OBJECT, not the floor. InfBaGel channels 2/3 remain a hypothesis. To run this limited test, explicitly enable Accept Provisional Contact Schema AND confirm BOTH hands and feet are clear of the static object at BOTH captured times. Server checks joint-to-surface margins, not exact mesh-part contacts. A validation PASS is NOT semantic verification.", MessageType.Warning);
+            EditorGUILayout.HelpBox("v0.6: optional registered static room + explicit goal markers. Leave Use Registered Environment OFF for the previous official-scene test. Non-contact start clearance checks remain; contact schema evidence is in the README/metadata.", MessageType.Info);
             using (new EditorGUI.DisabledScope(!UnityEngine.Application.isPlaying || !c.isActiveAndEnabled || c.IsBusy))
             {
                 if (GUILayout.Button("1. Remember loaded InfBaGel scene + static object")) c.RememberInfBaGelScene();
@@ -33,8 +33,6 @@ namespace Utopia.Motion.Editor
             using (new EditorGUI.DisabledScope(!c.IsBusy))
                 if (GUILayout.Button("Cancel waiting (server continues)")) c.CancelWaiting();
             EditorGUILayout.HelpBox(c.Status, string.IsNullOrEmpty(c.LastError)?MessageType.Info:MessageType.Error);
-            EditorGUILayout.LabelField("Contact schema", "PROVISIONAL (not dataset-verified)");
-            EditorGUILayout.LabelField("Explicit provisional opt-in",c.acceptProvisionalContactSchema.ToString());
             EditorGUILayout.LabelField("Input validation passed",c.InputValidated.ToString());
             EditorGUILayout.LabelField("Fixed output frames passed",c.OutputFramesVerified.ToString());
             EditorGUILayout.LabelField("HTTP round trip (ms)",c.LastHttpMs<0?"-":c.LastHttpMs.ToString("F1"));
